@@ -1,0 +1,858 @@
+-- AP Spam + Base Defender Combined - TABBED VERSION
+-- Place in StarterPlayer > StarterPlayerScripts (LocalScript)
+
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local TextChatService = game:GetService("TextChatService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait()
+    LocalPlayer = Players.LocalPlayer
+end
+
+-- Detect platform
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local guiScale = isMobile and 0.85 or 1.0
+
+-- Pre-cache chat services
+local chatChannel = nil
+local legacyChatEvents = nil
+
+task.spawn(function()
+    pcall(function()
+        if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+            local channels = TextChatService:WaitForChild("TextChannels", 5)
+            if channels then
+                chatChannel = channels:WaitForChild("RBXGeneral", 5)
+            end
+        end
+    end)
+    
+    pcall(function()
+        local events = ReplicatedStorage:WaitForChild("DefaultChatSystemChatEvents", 5)
+        if events then
+            legacyChatEvents = events:WaitForChild("SayMessageRequest", 5)
+        end
+    end)
+end)
+
+-- Settings
+local baseDefenderEnabled = true
+local autoAPAfterSteal = false
+local punishedPlayers = {}
+local stealDetectionSpeed = 0.005
+
+-- Priority commands
+local priorityCommands = {
+    "rocket",
+    "balloon"
+}
+
+-- Secondary commands
+local secondaryCommands = {
+    "inverse",
+    "tiny",
+    "morph",
+    "jumpscare"
+}
+
+-- Defense command
+local defenseCommand = "balloon"
+
+-- Find nearest player
+local function getNearestPlayer()
+    local character = LocalPlayer.Character
+    if not character then return nil end
+    
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    
+    local nearestPlayer = nil
+    local shortestDistance = math.huge
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local targetHrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if targetHrp then
+                local distance = (hrp.Position - targetHrp.Position).Magnitude
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    nearestPlayer = player
+                end
+            end
+        end
+    end
+    
+    return nearestPlayer, shortestDistance
+end
+
+-- Execute AP Spam commands
+local function executeAPSpam(targetUsername)
+    if not targetUsername or targetUsername == "" then
+        return
+    end
+    
+    for _, cmd in ipairs(priorityCommands) do
+        local fullCommand = ";" .. cmd .. " " .. targetUsername
+        
+        task.spawn(function()
+            if chatChannel then
+                pcall(chatChannel.SendAsync, chatChannel, fullCommand)
+            end
+            if legacyChatEvents then
+                pcall(legacyChatEvents.FireServer, legacyChatEvents, fullCommand, "All")
+            end
+        end)
+    end
+    
+    task.wait(0.05)
+    
+    for _, cmd in ipairs(secondaryCommands) do
+        local fullCommand = ";" .. cmd .. " " .. targetUsername
+        
+        task.spawn(function()
+            if chatChannel then
+                pcall(chatChannel.SendAsync, chatChannel, fullCommand)
+            end
+            if legacyChatEvents then
+                pcall(legacyChatEvents.FireServer, legacyChatEvents, fullCommand, "All")
+            end
+        end)
+    end
+end
+
+-- Execute defense command
+local function executeDefense(targetPlayerName)
+    if not baseDefenderEnabled then return end
+    if punishedPlayers[targetPlayerName] then return end
+    
+    punishedPlayers[targetPlayerName] = true
+    
+    local fullCommand = ";" .. defenseCommand .. " " .. targetPlayerName
+    
+    task.spawn(function()
+        if chatChannel then
+            pcall(chatChannel.SendAsync, chatChannel, fullCommand)
+        end
+        if legacyChatEvents then
+            pcall(legacyChatEvents.FireServer, legacyChatEvents, fullCommand, "All")
+        end
+    end)
+    
+    task.delay(30, function()
+        punishedPlayers[targetPlayerName] = nil
+    end)
+end
+
+-- Find player's plot
+local function findMyPlot()
+    local plotsFolder = workspace:FindFirstChild("Plots")
+    if not plotsFolder then return nil end
+    
+    for _, plot in pairs(plotsFolder:GetChildren()) do
+        local plotSign = plot:FindFirstChild("PlotSign")
+        if plotSign then
+            local yourBase = plotSign:FindFirstChild("YourBase")
+            if yourBase and yourBase:IsA("BillboardGui") and yourBase.Enabled == true then
+                return plot
+            end
+        end
+    end
+    return nil
+end
+
+-- Strip HTML tags
+local function stripTags(str)
+    return string.gsub(str, "<.->", "")
+end
+
+-- Base Defender Protection
+local function startBaseDefender()
+    local myPlot = nil
+    
+    for i = 1, 10 do
+        myPlot = findMyPlot()
+        if myPlot then break end
+        task.wait(1)
+    end
+    
+    if not myPlot then
+        return
+    end
+    
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local trackedTexts = {}
+    
+    local function handleTheft()
+        task.wait(stealDetectionSpeed)
+        
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Name ~= LocalPlayer.Name and player.Character then
+                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local plotPos = myPlot:GetPivot().Position
+                    if (hrp.Position - plotPos).Magnitude < 300 then
+                        executeDefense(player.Name)
+                        return
+                    end
+                end
+            end
+        end
+    end
+    
+    local cachedGuis = {}
+    local lastCacheUpdate = 0
+    
+    RunService.RenderStepped:Connect(function()
+        if not baseDefenderEnabled then return end
+        
+        local now = tick()
+        if now - lastCacheUpdate > 0.5 then
+            cachedGuis = playerGui:GetDescendants()
+            lastCacheUpdate = now
+        end
+        
+        for i = 1, #cachedGuis do
+            local gui = cachedGuis[i]
+            if gui and gui.Parent and (gui:IsA("TextLabel") or gui:IsA("TextButton")) then
+                local text = gui.Text
+                if text and text ~= "" then
+                    local lowerText = string.lower(stripTags(text))
+                    if (string.find(lowerText, "stealing", 1, true) or string.find(lowerText, "robbing", 1, true)) and not trackedTexts[gui] then
+                        trackedTexts[gui] = true
+                        handleTheft()
+                        task.delay(5, function()
+                            trackedTexts[gui] = nil
+                        end)
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    
+    playerGui.DescendantAdded:Connect(function(gui)
+        table.insert(cachedGuis, gui)
+    end)
+end
+
+-- Create GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "APSpamGUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Main frame
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 260, 0, 280)
+mainFrame.Position = UDim2.new(1, -270, 0, 80)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local uiScale = Instance.new("UIScale")
+uiScale.Scale = guiScale
+uiScale.Parent = mainFrame
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = mainFrame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(70, 90, 180)
+stroke.Thickness = 2
+stroke.Transparency = 0.3
+stroke.Parent = mainFrame
+
+-- Animated border glow
+task.spawn(function()
+    while true do
+        for i = 0, 1, 0.02 do
+            stroke.Color = Color3.fromHSV(0.6 + i * 0.15, 0.7, 0.85)
+            task.wait(0.05)
+        end
+        for i = 1, 0, -0.02 do
+            stroke.Color = Color3.fromHSV(0.6 + i * 0.15, 0.7, 0.85)
+            task.wait(0.05)
+        end
+    end
+end)
+
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 50)
+titleBar.BackgroundColor3 = Color3.fromRGB(15, 17, 22)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 12)
+titleCorner.Parent = titleBar
+
+-- Title text
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -60, 0, 22)
+title.Position = UDim2.new(0, 14, 0, 4)
+title.BackgroundTransparency = 1
+title.Text = "VHUB DEFENSE V2"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 15
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = titleBar
+
+-- Animated title
+task.spawn(function()
+    while true do
+        for i = 0, 1, 0.015 do
+            title.TextColor3 = Color3.fromHSV(0.6 + i * 0.2, 0.4, 1)
+            task.wait(0.05)
+        end
+        for i = 1, 0, -0.015 do
+            title.TextColor3 = Color3.fromHSV(0.6 + i * 0.2, 0.4, 1)
+            task.wait(0.05)
+        end
+    end
+end)
+
+-- Discord link
+local discordLink = Instance.new("TextLabel")
+discordLink.Size = UDim2.new(1, -24, 0, 16)
+discordLink.Position = UDim2.new(0, 14, 0, 28)
+discordLink.BackgroundTransparency = 1
+discordLink.Text = "discord.gg/visionshub"
+discordLink.TextColor3 = Color3.fromRGB(88, 101, 242)
+discordLink.TextSize = 10
+discordLink.Font = Enum.Font.GothamMedium
+discordLink.TextXAlignment = Enum.TextXAlignment.Left
+discordLink.Parent = titleBar
+
+-- Minimize button
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Size = UDim2.new(0, 24, 0, 24)
+minimizeButton.Position = UDim2.new(1, -30, 0, 4)
+minimizeButton.BackgroundColor3 = Color3.fromRGB(200, 140, 50)
+minimizeButton.Text = "_"
+minimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+minimizeButton.TextSize = 16
+minimizeButton.Font = Enum.Font.GothamBold
+minimizeButton.Parent = titleBar
+
+local minimizeCorner = Instance.new("UICorner")
+minimizeCorner.CornerRadius = UDim.new(1, 0)
+minimizeCorner.Parent = minimizeButton
+
+-- Tab Bar
+local tabBar = Instance.new("Frame")
+tabBar.Name = "TabBar"
+tabBar.Size = UDim2.new(1, -20, 0, 36)
+tabBar.Position = UDim2.new(0, 10, 0, 58)
+tabBar.BackgroundColor3 = Color3.fromRGB(15, 17, 22)
+tabBar.BorderSizePixel = 0
+tabBar.Parent = mainFrame
+
+local tabBarCorner = Instance.new("UICorner")
+tabBarCorner.CornerRadius = UDim.new(0, 8)
+tabBarCorner.Parent = tabBar
+
+-- Tab buttons container
+local tabContainer = Instance.new("Frame")
+tabContainer.Size = UDim2.new(1, -8, 1, -8)
+tabContainer.Position = UDim2.new(0, 4, 0, 4)
+tabContainer.BackgroundTransparency = 1
+tabContainer.Parent = tabBar
+
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+tabLayout.Padding = UDim.new(0, 4)
+tabLayout.Parent = tabContainer
+
+-- Tab 1: Defense (MAIN TAB - ALWAYS SHOWN FIRST)
+local tab1 = Instance.new("TextButton")
+tab1.Name = "DefenseTab"
+tab1.Size = UDim2.new(0.5, -2, 1, 0)
+tab1.BackgroundColor3 = Color3.fromRGB(70, 90, 180)
+tab1.Text = "🛡️ DEFENSE"
+tab1.TextColor3 = Color3.fromRGB(255, 255, 255)
+tab1.TextSize = 11
+tab1.Font = Enum.Font.GothamBold
+tab1.LayoutOrder = 1
+tab1.Parent = tabContainer
+
+local tab1Corner = Instance.new("UICorner")
+tab1Corner.CornerRadius = UDim.new(0, 6)
+tab1Corner.Parent = tab1
+
+-- Tab 2: Auto AP (SECOND TAB)
+local tab2 = Instance.new("TextButton")
+tab2.Name = "AutoAPTab"
+tab2.Size = UDim2.new(0.5, -2, 1, 0)
+tab2.BackgroundColor3 = Color3.fromRGB(35, 37, 42)
+tab2.Text = "💥 AUTO AP"
+tab2.TextColor3 = Color3.fromRGB(150, 150, 155)
+tab2.TextSize = 11
+tab2.Font = Enum.Font.GothamBold
+tab2.LayoutOrder = 2
+tab2.Parent = tabContainer
+
+local tab2Corner = Instance.new("UICorner")
+tab2Corner.CornerRadius = UDim.new(0, 6)
+tab2Corner.Parent = tab2
+
+-- Content container
+local contentContainer = Instance.new("Frame")
+contentContainer.Name = "ContentContainer"
+contentContainer.Size = UDim2.new(1, -20, 1, -110)
+contentContainer.Position = UDim2.new(0, 10, 0, 100)
+contentContainer.BackgroundTransparency = 1
+contentContainer.Parent = mainFrame
+
+-- PAGE 1: DEFENSE CONTENT
+local defensePage = Instance.new("Frame")
+defensePage.Name = "DefensePage"
+defensePage.Size = UDim2.new(1, 0, 1, 0)
+defensePage.BackgroundTransparency = 1
+defensePage.Visible = true
+defensePage.Parent = contentContainer
+
+-- AP Spam Section
+local spamLabel = Instance.new("TextLabel")
+spamLabel.Size = UDim2.new(1, 0, 0, 20)
+spamLabel.Position = UDim2.new(0, 0, 0, 0)
+spamLabel.BackgroundTransparency = 1
+spamLabel.Text = "⚡ AP SPAM"
+spamLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
+spamLabel.TextSize = 12
+spamLabel.Font = Enum.Font.GothamBold
+spamLabel.TextXAlignment = Enum.TextXAlignment.Left
+spamLabel.Parent = defensePage
+
+local infoLabel = Instance.new("TextLabel")
+infoLabel.Size = UDim2.new(1, 0, 0, 16)
+infoLabel.Position = UDim2.new(0, 0, 0, 22)
+infoLabel.BackgroundTransparency = 1
+infoLabel.Text = "Target: Nearest Player"
+infoLabel.TextColor3 = Color3.fromRGB(130, 130, 140)
+infoLabel.TextSize = 9
+infoLabel.Font = Enum.Font.Gotham
+infoLabel.Parent = defensePage
+
+local executeButton = Instance.new("TextButton")
+executeButton.Size = UDim2.new(1, 0, 0, 38)
+executeButton.Position = UDim2.new(0, 0, 0, 40)
+executeButton.BackgroundColor3 = Color3.fromRGB(220, 60, 80)
+executeButton.Text = "SPAM NEAREST"
+executeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+executeButton.TextSize = 12
+executeButton.Font = Enum.Font.GothamBold
+executeButton.Parent = defensePage
+
+local executeCorner = Instance.new("UICorner")
+executeCorner.CornerRadius = UDim.new(0, 8)
+executeCorner.Parent = executeButton
+
+local executeGradient = Instance.new("UIGradient")
+executeGradient.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(240, 80, 100)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 50, 70))
+}
+executeGradient.Rotation = 90
+executeGradient.Parent = executeButton
+
+-- Divider
+local divider1 = Instance.new("Frame")
+divider1.Size = UDim2.new(1, 0, 0, 1)
+divider1.Position = UDim2.new(0, 0, 0, 86)
+divider1.BackgroundColor3 = Color3.fromRGB(50, 52, 60)
+divider1.BorderSizePixel = 0
+divider1.Parent = defensePage
+
+-- Base Defender Section
+local defenderLabel = Instance.new("TextLabel")
+defenderLabel.Size = UDim2.new(1, 0, 0, 20)
+defenderLabel.Position = UDim2.new(0, 0, 0, 94)
+defenderLabel.BackgroundTransparency = 1
+defenderLabel.Text = "🛡️ BASE DEFENDER"
+defenderLabel.TextColor3 = Color3.fromRGB(120, 180, 255)
+defenderLabel.TextSize = 12
+defenderLabel.Font = Enum.Font.GothamBold
+defenderLabel.TextXAlignment = Enum.TextXAlignment.Left
+defenderLabel.Parent = defensePage
+
+local defenderToggle = Instance.new("TextButton")
+defenderToggle.Size = UDim2.new(1, 0, 0, 38)
+defenderToggle.Position = UDim2.new(0, 0, 0, 116)
+defenderToggle.BackgroundColor3 = Color3.fromRGB(70, 180, 90)
+defenderToggle.Text = "ENABLED ✓"
+defenderToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+defenderToggle.TextSize = 12
+defenderToggle.Font = Enum.Font.GothamBold
+defenderToggle.Parent = defensePage
+
+local defenderCorner = Instance.new("UICorner")
+defenderCorner.CornerRadius = UDim.new(0, 8)
+defenderCorner.Parent = defenderToggle
+
+local defenderGradient = Instance.new("UIGradient")
+defenderGradient.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 200, 110)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 160, 80))
+}
+defenderGradient.Rotation = 90
+defenderGradient.Parent = defenderToggle
+
+-- PAGE 2: AUTO AP CONTENT
+local autoAPPage = Instance.new("Frame")
+autoAPPage.Name = "AutoAPPage"
+autoAPPage.Size = UDim2.new(1, 0, 1, 0)
+autoAPPage.BackgroundTransparency = 1
+autoAPPage.Visible = false
+autoAPPage.Parent = contentContainer
+
+-- Auto AP Section
+local autoAPHeader = Instance.new("TextLabel")
+autoAPHeader.Size = UDim2.new(1, 0, 0, 20)
+autoAPHeader.Position = UDim2.new(0, 0, 0, 0)
+autoAPHeader.BackgroundTransparency = 1
+autoAPHeader.Text = "💥 AUTO AP AFTER STEAL"
+autoAPHeader.TextColor3 = Color3.fromRGB(255, 150, 120)
+autoAPHeader.TextSize = 12
+autoAPHeader.Font = Enum.Font.GothamBold
+autoAPHeader.TextXAlignment = Enum.TextXAlignment.Left
+autoAPHeader.Parent = autoAPPage
+
+local autoAPDescription = Instance.new("TextLabel")
+autoAPDescription.Size = UDim2.new(1, 0, 0, 40)
+autoAPDescription.Position = UDim2.new(0, 0, 0, 22)
+autoAPDescription.BackgroundTransparency = 1
+autoAPDescription.Text = "Automatically executes AP spam on the nearest player after you successfully steal from their base."
+autoAPDescription.TextColor3 = Color3.fromRGB(130, 130, 140)
+autoAPDescription.TextSize = 9
+autoAPDescription.Font = Enum.Font.Gotham
+autoAPDescription.TextWrapped = true
+autoAPDescription.TextXAlignment = Enum.TextXAlignment.Left
+autoAPDescription.TextYAlignment = Enum.TextYAlignment.Top
+autoAPDescription.Parent = autoAPPage
+
+local autoAPToggle = Instance.new("TextButton")
+autoAPToggle.Size = UDim2.new(1, 0, 0, 38)
+autoAPToggle.Position = UDim2.new(0, 0, 0, 66)
+autoAPToggle.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+autoAPToggle.Text = "DISABLED ✗"
+autoAPToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoAPToggle.TextSize = 12
+autoAPToggle.Font = Enum.Font.GothamBold
+autoAPToggle.Parent = autoAPPage
+
+local autoAPCorner = Instance.new("UICorner")
+autoAPCorner.CornerRadius = UDim.new(0, 8)
+autoAPCorner.Parent = autoAPToggle
+
+local autoAPGradient = Instance.new("UIGradient")
+autoAPGradient.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 80, 100)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 60, 80))
+}
+autoAPGradient.Rotation = 90
+autoAPGradient.Parent = autoAPToggle
+
+-- Status indicator
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, 0, 0, 50)
+statusLabel.Position = UDim2.new(0, 0, 0, 110)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Status: Waiting for steal action..."
+statusLabel.TextColor3 = Color3.fromRGB(130, 130, 140)
+statusLabel.TextSize = 9
+statusLabel.Font = Enum.Font.GothamMedium
+statusLabel.TextWrapped = true
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.TextYAlignment = Enum.TextYAlignment.Top
+statusLabel.Parent = autoAPPage
+
+-- Tab switching logic
+local currentTab = 1
+
+local function switchTab(tabNumber)
+    if tabNumber == currentTab then return end
+    
+    local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    
+    if tabNumber == 1 then
+        -- Switch to Defense tab
+        TweenService:Create(tab1, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(70, 90, 180),
+            TextColor3 = Color3.fromRGB(255, 255, 255)
+        }):Play()
+        TweenService:Create(tab2, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(35, 37, 42),
+            TextColor3 = Color3.fromRGB(150, 150, 155)
+        }):Play()
+        
+        defensePage.Visible = true
+        autoAPPage.Visible = false
+    else
+        -- Switch to Auto AP tab
+        TweenService:Create(tab1, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(35, 37, 42),
+            TextColor3 = Color3.fromRGB(150, 150, 155)
+        }):Play()
+        TweenService:Create(tab2, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(220, 60, 80),
+            TextColor3 = Color3.fromRGB(255, 255, 255)
+        }):Play()
+        
+        defensePage.Visible = false
+        autoAPPage.Visible = true
+    end
+    
+    currentTab = tabNumber
+end
+
+tab1.MouseButton1Click:Connect(function()
+    switchTab(1)
+end)
+
+tab2.MouseButton1Click:Connect(function()
+    switchTab(2)
+end)
+
+-- Minimize functionality
+local isMinimized = false
+local originalSize = mainFrame.Size
+local minimizedSize = UDim2.new(0, 260, 0, 50)
+
+minimizeButton.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    
+    local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    
+    if isMinimized then
+        TweenService:Create(mainFrame, tweenInfo, {Size = minimizedSize}):Play()
+        minimizeButton.Text = "+"
+        tabBar.Visible = false
+        contentContainer.Visible = false
+    else
+        TweenService:Create(mainFrame, tweenInfo, {Size = originalSize}):Play()
+        minimizeButton.Text = "_"
+        tabBar.Visible = true
+        contentContainer.Visible = true
+    end
+end)
+
+-- Execute button functionality
+executeButton.MouseButton1Click:Connect(function()
+    local nearestPlayer, distance = getNearestPlayer()
+    
+    if nearestPlayer then
+        infoLabel.Text = "Spamming: " .. nearestPlayer.Name
+        infoLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        
+        local tweenInfo = TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        TweenService:Create(executeButton, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(255, 90, 110),
+            Size = UDim2.new(1, 4, 0, 40)
+        }):Play()
+        
+        executeAPSpam(nearestPlayer.Name)
+        
+        task.wait(0.15)
+        TweenService:Create(executeButton, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(220, 60, 80),
+            Size = UDim2.new(1, 0, 0, 38)
+        }):Play()
+        
+        task.wait(1.5)
+        infoLabel.Text = "Target: Nearest Player"
+        infoLabel.TextColor3 = Color3.fromRGB(130, 130, 140)
+    else
+        infoLabel.Text = "No players found!"
+        infoLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+        
+        task.wait(2)
+        infoLabel.Text = "Target: Nearest Player"
+        infoLabel.TextColor3 = Color3.fromRGB(130, 130, 140)
+    end
+end)
+
+-- Base Defender toggle
+defenderToggle.MouseButton1Click:Connect(function()
+    baseDefenderEnabled = not baseDefenderEnabled
+    
+    local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    
+    if baseDefenderEnabled then
+        TweenService:Create(defenderToggle, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(70, 180, 90)
+        }):Play()
+        defenderToggle.Text = "ENABLED ✓"
+        defenderGradient.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 200, 110)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 160, 80))
+        }
+    else
+        TweenService:Create(defenderToggle, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(180, 60, 70)
+        }):Play()
+        defenderToggle.Text = "DISABLED ✗"
+        defenderGradient.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(200, 80, 90)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 50, 60))
+        }
+    end
+end)
+
+-- Auto AP toggle
+autoAPToggle.MouseButton1Click:Connect(function()
+    autoAPAfterSteal = not autoAPAfterSteal
+    
+    local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    
+    if autoAPAfterSteal then
+        TweenService:Create(autoAPToggle, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(220, 60, 80)
+        }):Play()
+        autoAPToggle.Text = "ENABLED ✓"
+        autoAPGradient.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(240, 80, 100)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 50, 70))
+        }
+        statusLabel.Text = "Status: Active - Monitoring for steal actions"
+        statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+    else
+        TweenService:Create(autoAPToggle, tweenInfo, {
+            BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+        }):Play()
+        autoAPToggle.Text = "DISABLED ✗"
+        autoAPGradient.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 80, 100)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 60, 80))
+        }
+        statusLabel.Text = "Status: Waiting for steal action..."
+        statusLabel.TextColor3 = Color3.fromRGB(130, 130, 140)
+    end
+end)
+
+-- Update nearest player display
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if not isMinimized and currentTab == 1 then
+            local nearestPlayer, distance = getNearestPlayer()
+            if nearestPlayer and distance then
+                infoLabel.Text = string.format("Nearest: %s (%.0f studs)", nearestPlayer.Name, distance)
+            else
+                infoLabel.Text = "Target: Nearest Player"
+            end
+        end
+    end
+end)
+
+-- Start base defender
+startBaseDefender()
+
+-- Auto AP After Steal System
+task.spawn(function()
+    local trackedPrompts = {}
+    
+    local function monitorPrompt(prompt)
+        if trackedPrompts[prompt] then return end
+        
+        local promptName = string.lower(prompt.Name or "")
+        local actionText = string.lower(prompt.ActionText or "")
+        local objectText = string.lower(prompt.ObjectText or "")
+        
+        if not (string.find(promptName, "steal") or 
+                string.find(actionText, "steal") or 
+                string.find(objectText, "steal")) then
+            return
+        end
+        
+        trackedPrompts[prompt] = true
+        
+        local connection = prompt.Triggered:Connect(function(player)
+            if not autoAPAfterSteal then return end
+            if player ~= LocalPlayer then return end
+            
+            -- Update status on Auto AP tab
+            if currentTab == 2 then
+                statusLabel.Text = "Status: Steal detected! Executing AP spam..."
+                statusLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+            end
+            
+            local holdDuration = prompt.HoldDuration or 0
+            task.wait(holdDuration + 0.1)
+            
+            local nearestPlayer, distance = getNearestPlayer()
+            if nearestPlayer then
+                executeAPSpam(nearestPlayer.Name)
+                
+                if currentTab == 2 then
+                    statusLabel.Text = string.format("Status: Spammed %s!", nearestPlayer.Name)
+                    statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+                    
+                    task.wait(3)
+                    if autoAPAfterSteal then
+                        statusLabel.Text = "Status: Active - Monitoring for steal actions"
+                    end
+                end
+            end
+        end)
+        
+        prompt.Destroying:Connect(function()
+            trackedPrompts[prompt] = nil
+            if connection then
+                connection:Disconnect()
+            end
+        end)
+    end
+    
+    for _, descendant in ipairs(workspace:GetDescendants()) do
+        if descendant:IsA("ProximityPrompt") then
+            monitorPrompt(descendant)
+        end
+    end
+    
+    workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("ProximityPrompt") then
+            task.wait(0.1)
+            monitorPrompt(descendant)
+        end
+    end)
+    
+    local function setupCharacter(character)
+        for _, descendant in ipairs(character:GetDescendants()) do
+            if descendant:IsA("ProximityPrompt") then
+                monitorPrompt(descendant)
+            end
+        end
+        
+        character.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("ProximityPrompt") then
+                task.wait(0.1)
+                monitorPrompt(descendant)
+            end
+        end)
+    end
+    
+    if LocalPlayer.Character then
+        setupCharacter(LocalPlayer.Character)
+    end
+    
+    LocalPlayer.CharacterAdded:Connect(setupCharacter)
+end)
