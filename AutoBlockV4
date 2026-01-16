@@ -30,8 +30,8 @@ end
 -- ================= CONFIG SYSTEM =================
 local CONFIG_FILE = "AutoBlockTimeConfig.json"
 local config = {
-    blockTime = 0.80,
-    balloonTime = 1.35,
+    blockTime = 1.05,
+    balloonTime = 1.41,
     autoBlockEnabled = true,
     autoBalloonEnabled = true
 }
@@ -62,7 +62,7 @@ local function autoClickBlockButton() local currentTime = tick() if clicking or 
 local function blockNearestPlayer() local nearestPlayer = getNearestPlayer() if not nearestPlayer then return false end task.spawn(function() pcall(function() StarterGui:SetCore("PromptBlockPlayer", nearestPlayer) end) end) return true end
 
 local lastPromptCheck = 0
-local promptCheckInterval = 0.016
+local promptCheckInterval = 0.005
 local blockPromptConnection = RunService.RenderStepped:Connect(function() local currentTime = tick() if clicking or (currentTime - lastPromptCheck) < promptCheckInterval then return end lastPromptCheck = currentTime pcall(function() for _, gui in ipairs(CoreGui:GetDescendants()) do if gui:IsA("TextLabel") and gui.Visible then local text = gui.Text if text and string.find(text, "Block") and string.find(text, "?") then autoClickBlockButton() break end end end end) end)
 
 -- ================= OPTIMIZED AUTO TRIGGERS (RenderStepped) =================
