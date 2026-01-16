@@ -1,0 +1,163 @@
+-- Auto Block Script (TIME-BASED - OPTIMIZED)
+-- Uses RenderStepped for maximum speed and responsiveness
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do task.wait() LocalPlayer = Players.LocalPlayer end
+local TextChatService = game:GetService("TextChatService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local CoreGui = game:GetService("CoreGui")
+local Camera = workspace.CurrentCamera
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+
+-- ================= STEAL TIMER TRACKING =================
+local stealTimerRunning = false
+local stealTimerStartTime = 0
+local previousProgress = 0
+
+local function getStealElapsedTime()
+    if stealTimerRunning then
+        return tick() - stealTimerStartTime
+    end
+    return 0
+end
+
+-- ================= CONFIG SYSTEM =================
+local CONFIG_FILE = "AutoBlockTimeConfig.json"
+local config = {
+    blockTime = 0.80,
+    balloonTime = 1.35,
+    autoBlockEnabled = true,
+    autoBalloonEnabled = true
+}
+
+local function saveConfig() pcall(function() writefile(CONFIG_FILE, HttpService:JSONEncode(config)) end) end
+local function loadConfig() pcall(function() if isfile(CONFIG_FILE) then local loadedConfig = HttpService:JSONDecode(readfile(CONFIG_FILE)) config.blockTime = loadedConfig.blockTime or 0.80 config.balloonTime = loadedConfig.balloonTime or 1.35 config.autoBlockEnabled = loadedConfig.autoBlockEnabled or true config.autoBalloonEnabled = loadedConfig.autoBalloonEnabled or true end end) end
+loadConfig()
+
+local IsMobile = UserInputService.TouchEnabled
+local chatChannel = nil
+local legacyChatEvents = nil
+task.spawn(function() pcall(function() if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then local channels = TextChatService:WaitForChild("TextChannels", 5) if channels then chatChannel = channels:WaitForChild("RBXGeneral", 5) end end end) pcall(function() local events = game:GetService("ReplicatedStorage"):WaitForChild("DefaultChatSystemChatEvents", 5) if events then legacyChatEvents = events:WaitForChild("SayMessageRequest", 5) end end) end)
+
+local function getNearestPlayer() local myChar = LocalPlayer.Character if not myChar then return nil end local hrp = myChar:FindFirstChild("HumanoidRootPart") if not hrp then return nil end local myPos = hrp.Position local nearestPlayer = nil local shortestDistance = math.huge for _, player in ipairs(Players:GetPlayers()) do if player ~= LocalPlayer then local char = player.Character if char then local targetHrp = char:FindFirstChild("HumanoidRootPart") if targetHrp then local distance = (targetHrp.Position - myPos).Magnitude if distance < shortestDistance then shortestDistance = distance nearestPlayer = player end end end end end return nearestPlayer, shortestDistance end
+
+local cachedBar = nil
+local lastBarCheck = 0
+local function getProgressBar() local currentTime = tick() if cachedBar and (currentTime - lastBarCheck) < 2 then return cachedBar end local success, bar = pcall(function() local timerGui = CoreGui:FindFirstChild("564d033d77a44742da0000d5f18d9e5e0bffde696a57d5949b336bd876b2c4c5") if timerGui then local brainrotGui = timerGui:FindFirstChild("BrainrotTimerGui") if brainrotGui then local holder = brainrotGui:FindFirstChild("Holder") if holder then return holder:FindFirstChild("BarBg") end end end return nil end) if success and bar then cachedBar = bar lastBarCheck = currentTime return bar end return nil end
+
+local function getBarProgress() local barBg = getProgressBar() if not barBg then return 0 end local progressBar = barBg:FindFirstChild("Bar") or barBg:FindFirstChild("Fill") or barBg:FindFirstChild("Progress") or barBg:FindFirstChildWhichIsA("Frame") or barBg if progressBar and progressBar:IsA("GuiObject") then return progressBar.Size.X.Scale end return 0 end
+
+local function balloonNearestPlayer() local nearestPlayer = getNearestPlayer() if not nearestPlayer then return false end local command = ";balloon " .. nearestPlayer.Name task.spawn(function() if chatChannel then pcall(function() chatChannel:SendAsync(command) end) end if legacyChatEvents then pcall(function() legacyChatEvents:FireServer(command, "All") end) end end) return true end
+
+local clicking = false
+local lastClickTime = 0
+local function autoClickBlockButton() local currentTime = tick() if clicking or (currentTime - lastClickTime) < 0.03 then return end clicking = true lastClickTime = currentTime local centerX, blockY if IsMobile then centerX = Camera.ViewportSize.X / 2 blockY = Camera.ViewportSize.Y * 0.58 else centerX = 960 blockY = 563 end for i = 1, 5 do pcall(function() VirtualInputManager:SendMouseButtonEvent(centerX, blockY, 0, true, game, 1) VirtualInputManager:SendMouseButtonEvent(centerX, blockY, 0, false, game, 1) end) end clicking = false end
+
+local function blockNearestPlayer() local nearestPlayer = getNearestPlayer() if not nearestPlayer then return false end task.spawn(function() pcall(function() StarterGui:SetCore("PromptBlockPlayer", nearestPlayer) end) end) return true end
+
+local lastPromptCheck = 0
+local promptCheckInterval = 0.016
+local blockPromptConnection = RunService.RenderStepped:Connect(function() local currentTime = tick() if clicking or (currentTime - lastPromptCheck) < promptCheckInterval then return end lastPromptCheck = currentTime pcall(function() for _, gui in ipairs(CoreGui:GetDescendants()) do if gui:IsA("TextLabel") and gui.Visible then local text = gui.Text if text and string.find(text, "Block") and string.find(text, "?") then autoClickBlockButton() break end end end end) end)
+
+-- ================= OPTIMIZED AUTO TRIGGERS (RenderStepped) =================
+local hasBlockedThisCycle = false
+local hasBalloonedThisCycle = false
+
+local autoTriggerConnection = RunService.RenderStepped:Connect(function()
+    local progress = getBarProgress() 
+    
+    -- Start timer when bar starts filling
+    if progress > 0.01 and previousProgress <= 0.01 then 
+        stealTimerRunning = true 
+        stealTimerStartTime = tick() 
+        hasBlockedThisCycle = false 
+        hasBalloonedThisCycle = false 
+    end
+    
+    -- Stop timer when bar completes or resets
+    if progress >= 0.99 or (progress < 0.05 and previousProgress >= 0.05) then 
+        stealTimerRunning = false 
+    end
+    
+    if stealTimerRunning then 
+        local elapsedTime = getStealElapsedTime()
+        
+        -- Auto Block at specified time
+        if config.autoBlockEnabled and elapsedTime >= config.blockTime and not hasBlockedThisCycle then 
+            hasBlockedThisCycle = true 
+            blockNearestPlayer() 
+        end
+        
+        -- Auto Balloon at specified time
+        if config.autoBalloonEnabled and elapsedTime >= config.balloonTime and not hasBalloonedThisCycle then 
+            hasBalloonedThisCycle = true 
+            balloonNearestPlayer() 
+        end 
+    end
+    
+    previousProgress = progress 
+end)
+
+-- ================= GUI CREATION =================
+local screenGui = Instance.new("ScreenGui") screenGui.Name = "AutoBlockGUI" screenGui.ResetOnSpawn = false screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling screenGui.IgnoreGuiInset = true screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame") mainFrame.Name = "MainFrame" mainFrame.Size = UDim2.new(0, 220, 0, 280) mainFrame.Position = UDim2.new(1, -230, 0.5, -140) mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20) mainFrame.BorderSizePixel = 0 mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner") mainCorner.CornerRadius = UDim.new(0, 14) mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke") mainStroke.Color = Color3.fromRGB(100, 150, 255) mainStroke.Thickness = 2.5 mainStroke.Transparency = 0.3 mainStroke.Parent = mainFrame
+
+task.spawn(function() local hue = 0 while true do hue = (hue + 0.003) % 1 mainStroke.Color = Color3.fromHSV(hue, 0.7, 1) task.wait(0.05) end end)
+
+local header = Instance.new("Frame") header.Name = "Header" header.Size = UDim2.new(1, 0, 0, 38) header.BackgroundColor3 = Color3.fromRGB(25, 25, 35) header.BorderSizePixel = 0 header.Parent = mainFrame
+
+local headerCorner = Instance.new("UICorner") headerCorner.CornerRadius = UDim.new(0, 14) headerCorner.Parent = header
+
+local headerTitle = Instance.new("TextLabel") headerTitle.Size = UDim2.new(1, -40, 1, 0) headerTitle.Position = UDim2.new(0, 8, 0, 0) headerTitle.BackgroundTransparency = 1 headerTitle.Text = "⚡ Fast Mode" headerTitle.TextColor3 = Color3.fromRGB(255, 255, 255) headerTitle.Font = Enum.Font.GothamBold headerTitle.TextSize = 15 headerTitle.TextXAlignment = Enum.TextXAlignment.Left headerTitle.Parent = header
+
+local minimizeBtn = Instance.new("TextButton") minimizeBtn.Size = UDim2.new(0, 32, 0, 32) minimizeBtn.Position = UDim2.new(1, -35, 0, 3) minimizeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 55) minimizeBtn.Text = "−" minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255) minimizeBtn.Font = Enum.Font.GothamBold minimizeBtn.TextSize = 20 minimizeBtn.BorderSizePixel = 0 minimizeBtn.Parent = header
+
+local minCorner = Instance.new("UICorner") minCorner.CornerRadius = UDim.new(0, 8) minCorner.Parent = minimizeBtn
+
+local minimizedBtn = Instance.new("TextButton") minimizedBtn.Size = UDim2.new(0, 50, 0, 50) minimizedBtn.Position = UDim2.new(1, -60, 0.5, -25) minimizedBtn.BackgroundColor3 = Color3.fromRGB(100, 150, 255) minimizedBtn.Text = "⚡" minimizedBtn.TextColor3 = Color3.fromRGB(255, 255, 255) minimizedBtn.Font = Enum.Font.GothamBold minimizedBtn.TextSize = 24 minimizedBtn.BorderSizePixel = 0 minimizedBtn.Visible = false minimizedBtn.Parent = screenGui
+
+local minBtnCorner = Instance.new("UICorner") minBtnCorner.CornerRadius = UDim.new(1, 0) minBtnCorner.Parent = minimizedBtn
+
+local minBtnStroke = Instance.new("UIStroke") minBtnStroke.Color = Color3.fromRGB(255, 255, 255) minBtnStroke.Thickness = 2.5 minBtnStroke.Parent = minimizedBtn
+
+-- Current Time Display
+local timeLabel = Instance.new("TextLabel") timeLabel.Size = UDim2.new(1, -16, 0, 30) timeLabel.Position = UDim2.new(0, 8, 0, 46) timeLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 35) timeLabel.Text = "⏱️ Time: 0.00s" timeLabel.TextColor3 = Color3.fromRGB(255, 255, 255) timeLabel.Font = Enum.Font.GothamBold timeLabel.TextSize = 14 timeLabel.BorderSizePixel = 0 timeLabel.Parent = mainFrame
+
+local timeCorner = Instance.new("UICorner") timeCorner.CornerRadius = UDim.new(0, 8) timeCorner.Parent = timeLabel
+
+task.spawn(function() while true do local elapsedTime = getStealElapsedTime() timeLabel.Text = string.format("⏱️ Time: %.2fs", elapsedTime) if stealTimerRunning then timeLabel.BackgroundColor3 = Color3.fromRGB(100, 50, 200) else timeLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 35) end task.wait(0.01) end end)
+
+local function createToggleWithInput(name, emoji, yPos, configKey, timeKey) local toggle = Instance.new("TextButton") toggle.Name = name toggle.Size = UDim2.new(1, -16, 0, 32) toggle.Position = UDim2.new(0, 8, 0, yPos) toggle.BackgroundColor3 = config[configKey] and Color3.fromRGB(70, 190, 110) or Color3.fromRGB(190, 70, 70) toggle.BorderSizePixel = 0 toggle.Parent = mainFrame local corner = Instance.new("UICorner") corner.CornerRadius = UDim.new(0, 8) corner.Parent = toggle local label = Instance.new("TextLabel") label.Size = UDim2.new(1, -50, 1, 0) label.Position = UDim2.new(0, 5, 0, 0) label.BackgroundTransparency = 1 label.Text = emoji .. " " .. name label.TextColor3 = Color3.fromRGB(255, 255, 255) label.Font = Enum.Font.GothamBold label.TextSize = 13 label.TextXAlignment = Enum.TextXAlignment.Left label.Parent = toggle local status = Instance.new("TextLabel") status.Name = "Status" status.Size = UDim2.new(0, 40, 1, 0) status.Position = UDim2.new(1, -45, 0, 0) status.BackgroundTransparency = 1 status.Text = config[configKey] and "ON" or "OFF" status.TextColor3 = Color3.fromRGB(255, 255, 255) status.Font = Enum.Font.GothamBold status.TextSize = 12 status.TextXAlignment = Enum.TextXAlignment.Right status.Parent = toggle local inputBox = Instance.new("TextBox") inputBox.Name = name .. "Input" inputBox.Size = UDim2.new(1, -16, 0, 28) inputBox.Position = UDim2.new(0, 8, 0, yPos + 36) inputBox.BackgroundColor3 = Color3.fromRGB(30, 30, 40) inputBox.Text = tostring(config[timeKey]) inputBox.PlaceholderText = "Enter seconds" inputBox.TextColor3 = Color3.fromRGB(255, 255, 255) inputBox.Font = Enum.Font.Gotham inputBox.TextSize = 12 inputBox.BorderSizePixel = 0 inputBox.Parent = mainFrame local inputCorner = Instance.new("UICorner") inputCorner.CornerRadius = UDim.new(0, 6) inputCorner.Parent = inputBox local inputLabel = Instance.new("TextLabel") inputLabel.Size = UDim2.new(0, 60, 1, 0) inputLabel.Position = UDim2.new(1, -60, 0, 0) inputLabel.BackgroundTransparency = 1 inputLabel.Text = "seconds" inputLabel.TextColor3 = Color3.fromRGB(150, 150, 150) inputLabel.Font = Enum.Font.GothamBold inputLabel.TextSize = 11 inputLabel.Parent = inputBox toggle.MouseButton1Click:Connect(function() config[configKey] = not config[configKey] toggle.BackgroundColor3 = config[configKey] and Color3.fromRGB(70, 190, 110) or Color3.fromRGB(190, 70, 70) status.Text = config[configKey] and "ON" or "OFF" saveConfig() end) inputBox.FocusLost:Connect(function(enterPressed) local value = tonumber(inputBox.Text) if value and value >= 0 and value <= 10 then config[timeKey] = value inputBox.Text = tostring(value) saveConfig() else inputBox.Text = tostring(config[timeKey]) end end) return toggle, inputBox end
+
+createToggleWithInput("Block", "🚫", 84, "autoBlockEnabled", "blockTime") createToggleWithInput("Balloon", "🎈", 152, "autoBalloonEnabled", "balloonTime")
+
+local saveBtn = Instance.new("TextButton") saveBtn.Size = UDim2.new(1, -16, 0, 30) saveBtn.Position = UDim2.new(0, 8, 1, -38) saveBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 200) saveBtn.Text = "💾 Save Configuration" saveBtn.TextColor3 = Color3.fromRGB(255, 255, 255) saveBtn.Font = Enum.Font.GothamBold saveBtn.TextSize = 13 saveBtn.BorderSizePixel = 0 saveBtn.Parent = mainFrame
+
+local saveCorner = Instance.new("UICorner") saveCorner.CornerRadius = UDim.new(0, 8) saveCorner.Parent = saveBtn
+
+saveBtn.MouseButton1Click:Connect(function() saveConfig() saveBtn.Text = "✅ Configuration Saved" task.wait(1.5) saveBtn.Text = "💾 Save Configuration" end)
+
+local isMinimized = false
+local function toggleMinimize() isMinimized = not isMinimized local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out) if isMinimized then TweenService:Create(mainFrame, tweenInfo, {Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(1, -100, 0.5, 0)}):Play() task.wait(0.25) mainFrame.Visible = false minimizedBtn.Visible = true minimizedBtn.Size = UDim2.new(0, 0, 0, 0) TweenService:Create(minimizedBtn, tweenInfo, {Size = UDim2.new(0, 50, 0, 50)}):Play() else minimizedBtn.Visible = false mainFrame.Visible = true TweenService:Create(mainFrame, tweenInfo, {Size = UDim2.new(0, 220, 0, 280), Position = UDim2.new(1, -230, 0.5, -140)}):Play() end end
+
+minimizeBtn.MouseButton1Click:Connect(toggleMinimize) minimizedBtn.MouseButton1Click:Connect(toggleMinimize)
+
+local dragging = false local dragInput, mousePos, framePos
+local function makeDraggable(frame) frame.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true mousePos = input.Position framePos = frame.Position input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end) end end) frame.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end end) end
+
+UserInputService.InputChanged:Connect(function(input) if input == dragInput and dragging then local delta = input.Position - mousePos if mainFrame.Visible then mainFrame.Position = UDim2.new(framePos.X.Scale, framePos.X.Offset + delta.X, framePos.Y.Scale, framePos.Y.Offset + delta.Y) else minimizedBtn.Position = UDim2.new(framePos.X.Scale, framePos.X.Offset + delta.X, framePos.Y.Scale, framePos.Y.Offset + delta.Y) end end end)
+
+makeDraggable(header) makeDraggable(minimizedBtn)
+
+screenGui.Destroying:Connect(function() if blockPromptConnection then blockPromptConnection:Disconnect() end if autoTriggerConnection then autoTriggerConnection:Disconnect() end end)
